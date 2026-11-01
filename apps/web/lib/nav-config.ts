@@ -1,65 +1,86 @@
 /**
- * Top Navigation Configuration — substrate-topnav-001 (2026-05-24).
+ * Navigation configuration for the substrate <TopNav /> strip.
  *
- * Substrate ships with one nav entry (Home). Each portfolio company's
- * coding pipeline extends this file via F1-001 (per CTO mvp_scope —
- * cto-prompt-nav-requirement-001) to add links to the company's
- * specific feature pages.
+ * The substrate reads NAV_CONFIG to render the sticky top navigation.
+ * Shape contract (do not change): NavLink / NavGroup / NavConfig types
+ * and a NAV_CONFIG object literal with `primary` + `groups` keys.
  *
- * The substrate's TopNav component reads PRIMARY_NAV_LINKS and renders
- * them in the order declared.
- *
- * Convention:
- *   - Always keep Home as the first entry.
- *   - Group related pages with NavGroup (admin, account, etc.).
- *   - Use relative paths (Next.js route group parens collapse out of
- *     the URL — e.g. apps/web/app/(domain)/configure/page.tsx serves
- *     at /configure).
- *   - Server-only data; no client JS bundled from this file.
+ * Entries marked `adminOnly` are hidden from the public nav by the
+ * nav generator (and by the getVisibleNav helper below).
  */
 
-export type NavLink = {
-  /** URL path (without route-group parens). */
+export interface NavLink {
+  /** Absolute in-app href the nav item routes to. */
   href: string;
-  /** Visible label. */
+  /** Display label rendered in the nav strip. */
   label: string;
-  /** Operator/admin route — TopNav shows it only to admins. */
+  /** When true, only rendered for admin users. */
   adminOnly?: boolean;
-};
+}
 
-export type NavGroup = {
-  /** Group label (e.g. "Account", "Admin"). */
+export interface NavGroup {
+  /** Group heading shown for the dropdown/section. */
   label: string;
-  /** Child links shown inline (flat) inside the group. */
+  /** Links within the group. */
   links: NavLink[];
-};
+  /** When true, the whole group is admin-only. */
+  adminOnly?: boolean;
+}
 
-export type NavConfig = {
+export interface NavConfig {
+  /** Top-level links rendered directly in the nav strip. */
   primary: NavLink[];
+  /** Grouped links rendered as dropdown sections. */
   groups: NavGroup[];
+}
+
+export const NAV_CONFIG: NavConfig = {
+  primary: [
+    { href: "/rfps", label: "RFPs" },
+    { href: "/proposals", label: "Proposals" },
+    { href: "/library", label: "Case Studies" },
+  ],
+  groups: [
+    {
+      label: "Practice",
+      links: [
+        { href: "/practice", label: "Practice Profile" },
+        { href: "/settings/data", label: "Data & Retention" },
+      ],
+    },
+    {
+      label: "Admin",
+      adminOnly: true,
+      links: [
+        {
+          href: "/admin/generation-qa",
+          label: "Generation QA",
+          adminOnly: true,
+        },
+      ],
+    },
+  ],
 };
 
 /**
- * Default substrate configuration: just Home. Agents extending this
- * file should preserve Home as the first entry and append the
- * company-specific paths AFTER it.
- *
- * Example extension by F1-001:
- *   primary: [
- *     { href: "/", label: "Home" },
- *     { href: "/configure", label: "Configure" },
- *     { href: "/shop", label: "Shop" },
- *   ],
- *   groups: [
- *     { label: "Account", links: [
- *       { href: "/account/tier", label: "Tier" },
- *       { href: "/account/reorders", label: "Reorders" },
- *     ]},
- *   ],
+ * Returns the nav config filtered for the given viewer. Admin-only
+ * links and groups are stripped for non-admin viewers; groups left
+ * with no visible links are dropped entirely.
  */
-export const NAV_CONFIG: NavConfig = {
-  primary: [
-    { href: "/", label: "Home" },
-  ],
-  groups: [],
-};
+export function getVisibleNav(isAdmin: boolean): NavConfig {
+  const primary: NavLink[] = NAV_CONFIG.primary.filter(
+    (link: NavLink) => !link.adminOnly || isAdmin,
+  );
+
+  const groups: NavGroup[] = NAV_CONFIG.groups
+    .filter((group: NavGroup) => !group.adminOnly || isAdmin)
+    .map((group: NavGroup) => ({
+      ...group,
+      links: group.links.filter(
+        (link: NavLink) => !link.adminOnly || isAdmin,
+      ),
+    }))
+    .filter((group: NavGroup) => group.links.length > 0);
+
+  return { primary, groups };
+}
