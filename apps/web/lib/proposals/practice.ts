@@ -1,24 +1,15 @@
 import { sql } from "@vercel/postgres";
 
-export type PracticeProfile = {
-  id: string;
-  organizationId: string;
-  vertical: string;
-  methodology: string;
-  voiceSample: string;
-  createdBy: string;
-  createdAt: string;
-  updatedAt: string;
-};
+export type PracticeVertical = "management" | "marketing" | "it" | "hr";
 
 export type TeamMember = {
   id: string;
   organizationId: string;
-  fullName: string;
-  roleTitle: string;
-  credentials: string;
-  bioVerbatim: string;
   avatarFileId: string | null;
+  fullName: string;
+  title: string | null;
+  credentials: string[];
+  bioVerbatim: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -26,191 +17,227 @@ export type TeamMember = {
 export type RateBand = {
   id: string;
   organizationId: string;
-  name: string;
-  cadence: string;
-  amount: number;
+  bandName: string;
+  pricingModel: "hourly" | "day" | "fixed_fee";
   currency: string;
+  amountCents: number;
   createdAt: string;
   updatedAt: string;
 };
 
-export type PracticeProfileInput = {
-  vertical: string;
-  methodology: string;
-  voiceSample: string;
+export type PracticeProfile = {
+  organizationId: string;
+  vertical: PracticeVertical | null;
+  methodologyBlurb: string | null;
+  voiceSample: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
-export type TeamMemberInput = {
-  fullName: string;
-  roleTitle: string;
-  credentials: string;
-  bioVerbatim: string;
-  avatarFileId?: string | null;
+export type PracticeSettings = {
+  profile: PracticeProfile | null;
+  team: TeamMember[];
+  rates: RateBand[];
+  completionPercent: number;
 };
 
-export type RateBandInput = {
-  id?: string | null;
-  name: string;
-  cadence: string;
-  amount: number;
-  currency: string;
-};
+function computeCompletion(profile: PracticeProfile | null, teamCount: number, ratesCount: number): number {
+  let score = 0;
+  if (teamCount > 0) score += 25;
+  if (ratesCount > 0) score += 25;
+  if (profile?.vertical) score += 25;
+  if (profile?.methodologyBlurb && profile.methodologyBlurb.trim().length > 0) score += 12.5;
+  if (profile?.voiceSample && profile.voiceSample.trim().length > 0) score += 12.5;
+  return Math.round(score);
+}
 
-export async function getPracticeProfile(organizationId: string): Promise<PracticeProfile | null> {
-  const result = await sql<PracticeProfile>`
+export async function getPracticeSettings(organizationId: string): Promise<PracticeSettings> {
+  const profileResult = await sql<PracticeProfile>`
     SELECT
-      id,
-      organization_id AS "organizationId",
+      organization_id as "organizationId",
       vertical,
-      methodology,
-      voice_sample AS "voiceSample",
-      created_by AS "createdBy",
-      created_at AS "createdAt",
-      updated_at AS "updatedAt"
+      methodology_blurb as "methodologyBlurb",
+      voice_sample as "voiceSample",
+      created_at as "createdAt",
+      updated_at as "updatedAt"
     FROM proposals_practice_profiles
     WHERE organization_id = ${organizationId}
     LIMIT 1
   `;
-  return result.rows[0] ?? null;
-}
 
-export async function createPracticeProfile(
-  organizationId: string,
-  createdBy: string,
-  input: PracticeProfileInput
-): Promise<boolean> {
-  const result = await sql`
-    INSERT INTO proposals_practice_profiles (
-      organization_id, vertical, methodology, voice_sample, created_by
-    )
-    VALUES (${organizationId}, ${input.vertical}, ${input.methodology}, ${input.voiceSample}, ${createdBy})
-    ON CONFLICT (organization_id) DO NOTHING
-  `;
-  return (result.rowCount ?? 0) > 0;
-}
-
-export async function updatePracticeProfile(
-  organizationId: string,
-  input: PracticeProfileInput
-): Promise<void> {
-  await sql`
-    UPDATE proposals_practice_profiles
-    SET
-      vertical = ${input.vertical},
-      methodology = ${input.methodology},
-      voice_sample = ${input.voiceSample},
-      updated_at = NOW()
-    WHERE organization_id = ${organizationId}
-  `;
-}
-
-export async function listTeamMembers(organizationId: string): Promise<TeamMember[]> {
-  const result = await sql<TeamMember>`
+  const teamResult = await sql<TeamMember>`
     SELECT
       id,
-      organization_id AS "organizationId",
-      full_name AS "fullName",
-      role_title AS "roleTitle",
+      organization_id as "organizationId",
+      avatar_file_id as "avatarFileId",
+      full_name as "fullName",
+      title,
       credentials,
-      bio_verbatim AS "bioVerbatim",
-      avatar_file_id AS "avatarFileId",
-      created_at AS "createdAt",
-      updated_at AS "updatedAt"
+      bio_verbatim as "bioVerbatim",
+      created_at as "createdAt",
+      updated_at as "updatedAt"
     FROM proposals_team_members
     WHERE organization_id = ${organizationId}
     ORDER BY created_at ASC
   `;
-  return result.rows;
-}
 
-export async function createTeamMember(organizationId: string, input: TeamMemberInput): Promise<void> {
-  await sql`
-    INSERT INTO proposals_team_members (
-      organization_id, full_name, role_title, credentials, bio_verbatim, avatar_file_id
-    )
-    VALUES (
-      ${organizationId},
-      ${input.fullName},
-      ${input.roleTitle},
-      ${input.credentials},
-      ${input.bioVerbatim},
-      ${input.avatarFileId ?? null}
-    )
-  `;
-}
-
-export async function deleteTeamMember(organizationId: string, memberId: string): Promise<void> {
-  await sql`
-    DELETE FROM proposals_team_members
-    WHERE organization_id = ${organizationId}
-      AND id = ${memberId}
-  `;
-}
-
-export async function listRateCardBands(organizationId: string): Promise<RateBand[]> {
-  const result = await sql<RateBand>`
+  const ratesResult = await sql<RateBand>`
     SELECT
       id,
-      organization_id AS "organizationId",
-      name,
-      cadence,
-      amount,
+      organization_id as "organizationId",
+      band_name as "bandName",
+      pricing_model as "pricingModel",
       currency,
-      created_at AS "createdAt",
-      updated_at AS "updatedAt"
-    FROM proposals_rate_card_bands
+      amount_cents as "amountCents",
+      created_at as "createdAt",
+      updated_at as "updatedAt"
+    FROM proposals_rate_cards
     WHERE organization_id = ${organizationId}
     ORDER BY created_at ASC
   `;
-  return result.rows;
+
+  const profile = profileResult.rows[0] ?? null;
+  const team = teamResult.rows;
+  const rates = ratesResult.rows;
+
+  return {
+    profile,
+    team,
+    rates,
+    completionPercent: computeCompletion(profile, team.length, rates.length),
+  };
 }
 
-export async function upsertRateCardBand(organizationId: string, input: RateBandInput): Promise<void> {
+export type UpsertProfileInput = {
+  organizationId: string;
+  vertical: PracticeVertical | null;
+  methodologyBlurb: string | null;
+  voiceSample: string | null;
+};
+
+export async function upsertPracticeProfile(input: UpsertProfileInput): Promise<void> {
+  await sql`
+    INSERT INTO proposals_practice_profiles (
+      organization_id,
+      vertical,
+      methodology_blurb,
+      voice_sample
+    )
+    VALUES (
+      ${input.organizationId},
+      ${input.vertical},
+      ${input.methodologyBlurb},
+      ${input.voiceSample}
+    )
+    ON CONFLICT (organization_id)
+    DO UPDATE SET
+      vertical = EXCLUDED.vertical,
+      methodology_blurb = EXCLUDED.methodology_blurb,
+      voice_sample = EXCLUDED.voice_sample,
+      updated_at = now()
+  `;
+}
+
+export type UpsertTeamMemberInput = {
+  organizationId: string;
+  id?: string;
+  avatarFileId: string | null;
+  fullName: string;
+  title: string | null;
+  credentials: string[];
+  bioVerbatim: string;
+};
+
+export async function upsertTeamMember(input: UpsertTeamMemberInput): Promise<void> {
   if (input.id) {
     await sql`
-      UPDATE proposals_rate_card_bands
+      UPDATE proposals_team_members
       SET
-        name = ${input.name},
-        cadence = ${input.cadence},
-        amount = ${input.amount},
-        currency = ${input.currency},
-        updated_at = NOW()
+        avatar_file_id = ${input.avatarFileId},
+        full_name = ${input.fullName},
+        title = ${input.title},
+        credentials = ${input.credentials},
+        bio_verbatim = ${input.bioVerbatim},
+        updated_at = now()
       WHERE id = ${input.id}
-        AND organization_id = ${organizationId}
+        AND organization_id = ${input.organizationId}
     `;
     return;
   }
 
   await sql`
-    INSERT INTO proposals_rate_card_bands (organization_id, name, cadence, amount, currency)
-    VALUES (${organizationId}, ${input.name}, ${input.cadence}, ${input.amount}, ${input.currency})
+    INSERT INTO proposals_team_members (
+      organization_id,
+      avatar_file_id,
+      full_name,
+      title,
+      credentials,
+      bio_verbatim
+    ) VALUES (
+      ${input.organizationId},
+      ${input.avatarFileId},
+      ${input.fullName},
+      ${input.title},
+      ${input.credentials},
+      ${input.bioVerbatim}
+    )
   `;
 }
 
-export function getPracticeCompleteness(args: {
-  profile: PracticeProfile | null;
-  teamMembers: TeamMember[];
-  rateBands: RateBand[];
-}): { completed: number; total: number; percent: number } {
-  const total = 4;
-  let completed = 0;
+export async function deleteTeamMember(organizationId: string, id: string): Promise<void> {
+  await sql`
+    DELETE FROM proposals_team_members
+    WHERE id = ${id}
+      AND organization_id = ${organizationId}
+  `;
+}
 
-  if (args.teamMembers.length > 0) {
-    completed += 1;
+export type UpsertRateBandInput = {
+  organizationId: string;
+  id?: string;
+  bandName: string;
+  pricingModel: "hourly" | "day" | "fixed_fee";
+  currency: string;
+  amountCents: number;
+};
+
+export async function upsertRateBand(input: UpsertRateBandInput): Promise<void> {
+  if (input.id) {
+    await sql`
+      UPDATE proposals_rate_cards
+      SET
+        band_name = ${input.bandName},
+        pricing_model = ${input.pricingModel},
+        currency = ${input.currency},
+        amount_cents = ${input.amountCents},
+        updated_at = now()
+      WHERE id = ${input.id}
+        AND organization_id = ${input.organizationId}
+    `;
+    return;
   }
 
-  if (args.rateBands.length > 0) {
-    completed += 1;
-  }
+  await sql`
+    INSERT INTO proposals_rate_cards (
+      organization_id,
+      band_name,
+      pricing_model,
+      currency,
+      amount_cents
+    ) VALUES (
+      ${input.organizationId},
+      ${input.bandName},
+      ${input.pricingModel},
+      ${input.currency},
+      ${input.amountCents}
+    )
+  `;
+}
 
-  if (args.profile?.voiceSample?.trim()) {
-    completed += 1;
-  }
-
-  if (args.profile?.vertical?.trim() && args.profile?.methodology?.trim()) {
-    completed += 1;
-  }
-
-  const percent = Math.round((completed / total) * 100);
-  return { completed, total, percent };
+export async function deleteRateBand(organizationId: string, id: string): Promise<void> {
+  await sql`
+    DELETE FROM proposals_rate_cards
+    WHERE id = ${id}
+      AND organization_id = ${organizationId}
+  `;
 }

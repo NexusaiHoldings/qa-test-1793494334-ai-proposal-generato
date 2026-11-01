@@ -1,149 +1,99 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { requireProposalAccess } from "@/lib/proposals/access";
 import {
-  createPracticeProfile,
-  createTeamMember,
+  deleteRateBand,
   deleteTeamMember,
-  listTeamMembers,
-  listRateCardBands,
-  updatePracticeProfile,
-  upsertRateCardBand,
-  type PracticeProfileInput,
-  type TeamMemberInput,
-  type RateBandInput,
+  upsertPracticeProfile,
+  upsertRateBand,
+  upsertTeamMember,
+  type PracticeVertical,
 } from "@/lib/proposals/practice";
-import { requireOrganizationContext } from "@/lib/proposals/access";
 
-type ActionResult = {
-  ok: boolean;
-  error?: string;
-};
-
-function parseOptionalString(value: FormDataEntryValue | null): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed: string = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+function asNullable(value: FormDataEntryValue | null): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
 }
 
-function parseRequiredString(value: FormDataEntryValue | null, field: string): string {
-  if (typeof value !== "string") {
-    throw new Error(`Missing required field: ${field}`);
-  }
-  const trimmed: string = value.trim();
-  if (!trimmed) {
-    throw new Error(`Missing required field: ${field}`);
-  }
-  return trimmed;
+export async function saveProfileAction(formData: FormData): Promise<void> {
+  const { organizationId } = await requireProposalAccess();
+  const verticalRaw = asNullable(formData.get("vertical"));
+  const vertical = (verticalRaw as PracticeVertical | null) ?? null;
+
+  await upsertPracticeProfile({
+    organizationId,
+    vertical,
+    methodologyBlurb: asNullable(formData.get("methodologyBlurb")),
+    voiceSample: asNullable(formData.get("voiceSample")),
+  });
+
+  revalidatePath("/practice");
 }
 
-export async function savePracticeProfileAction(formData: FormData): Promise<ActionResult> {
-  try {
-    const { organizationId, userId } = await requireOrganizationContext();
-    const methodology: string = parseRequiredString(formData.get("methodology"), "methodology");
-    const voiceSample: string = parseRequiredString(formData.get("voiceSample"), "voiceSample");
-    const vertical: string = parseRequiredString(formData.get("vertical"), "vertical");
+export async function saveTeamMemberAction(formData: FormData): Promise<void> {
+  const { organizationId } = await requireProposalAccess();
+  const credentialsRaw = asNullable(formData.get("credentials"));
+  const credentials = credentialsRaw ? credentialsRaw.split(",").map((c) => c.trim()).filter(Boolean) : [];
 
-    const payload: PracticeProfileInput = {
-      methodology,
-      voiceSample,
-      vertical,
-    };
+  const fullName = asNullable(formData.get("fullName"));
+  const bioVerbatim = asNullable(formData.get("bioVerbatim"));
 
-    const existing = await createPracticeProfile(organizationId, userId, payload);
-    if (!existing) {
-      await updatePracticeProfile(organizationId, payload);
-    }
-
-    revalidatePath("/practice");
-    return { ok: true };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Unable to save profile.",
-    };
+  if (!fullName || !bioVerbatim) {
+    throw new Error("Name and bio are required");
   }
+
+  await upsertTeamMember({
+    organizationId,
+    id: asNullable(formData.get("id")) ?? undefined,
+    avatarFileId: asNullable(formData.get("avatarFileId")),
+    fullName,
+    title: asNullable(formData.get("title")),
+    credentials,
+    bioVerbatim,
+  });
+
+  revalidatePath("/practice");
 }
 
-export async function addTeamMemberAction(formData: FormData): Promise<ActionResult> {
-  try {
-    const { organizationId } = await requireOrganizationContext();
-
-    const payload: TeamMemberInput = {
-      fullName: parseRequiredString(formData.get("fullName"), "fullName"),
-      roleTitle: parseRequiredString(formData.get("roleTitle"), "roleTitle"),
-      credentials: parseRequiredString(formData.get("credentials"), "credentials"),
-      bioVerbatim: parseRequiredString(formData.get("bioVerbatim"), "bioVerbatim"),
-      avatarFileId: parseOptionalString(formData.get("avatarFileId")),
-    };
-
-    await createTeamMember(organizationId, payload);
-    revalidatePath("/practice");
-    return { ok: true };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Unable to add team member.",
-    };
-  }
+export async function deleteTeamMemberAction(formData: FormData): Promise<void> {
+  const { organizationId } = await requireProposalAccess();
+  const id = asNullable(formData.get("id"));
+  if (!id) throw new Error("Missing member id");
+  await deleteTeamMember(organizationId, id);
+  revalidatePath("/practice");
 }
 
-export async function removeTeamMemberAction(formData: FormData): Promise<ActionResult> {
-  try {
-    const { organizationId } = await requireOrganizationContext();
-    const memberId: string = parseRequiredString(formData.get("memberId"), "memberId");
+export async function saveRateBandAction(formData: FormData): Promise<void> {
+  const { organizationId } = await requireProposalAccess();
 
-    await deleteTeamMember(organizationId, memberId);
-    revalidatePath("/practice");
-    return { ok: true };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Unable to remove team member.",
-    };
+  const bandName = asNullable(formData.get("bandName"));
+  const pricingModel = asNullable(formData.get("pricingModel")) as "hourly" | "day" | "fixed_fee" | null;
+  const currency = (asNullable(formData.get("currency")) ?? "USD").toUpperCase();
+  const amount = Number(asNullable(formData.get("amount")));
+  const amountCents = Number.isFinite(amount) ? Math.round(amount * 100) : NaN;
+
+  if (!bandName || !pricingModel || Number.isNaN(amountCents)) {
+    throw new Error("Invalid rate band input");
   }
+
+  await upsertRateBand({
+    organizationId,
+    id: asNullable(formData.get("id")) ?? undefined,
+    bandName,
+    pricingModel,
+    currency,
+    amountCents,
+  });
+
+  revalidatePath("/practice");
 }
 
-export async function saveRateBandAction(formData: FormData): Promise<ActionResult> {
-  try {
-    const { organizationId } = await requireOrganizationContext();
-    const name: string = parseRequiredString(formData.get("name"), "name");
-    const cadence: string = parseRequiredString(formData.get("cadence"), "cadence");
-    const amountRaw: string = parseRequiredString(formData.get("amount"), "amount");
-    const amount: number = Number(amountRaw);
-    if (!Number.isFinite(amount) || amount < 0) {
-      throw new Error("Amount must be a non-negative number.");
-    }
-
-    const payload: RateBandInput = {
-      id: parseOptionalString(formData.get("id")),
-      name,
-      cadence,
-      amount,
-      currency: parseOptionalString(formData.get("currency")) ?? "USD",
-    };
-
-    await upsertRateCardBand(organizationId, payload);
-    revalidatePath("/practice");
-    return { ok: true };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Unable to save rate band.",
-    };
-  }
-}
-
-export async function preloadPracticeDataAction(): Promise<{
-  teamMembers: Awaited<ReturnType<typeof listTeamMembers>>;
-  rateCardBands: Awaited<ReturnType<typeof listRateCardBands>>;
-}> {
-  const { organizationId } = await requireOrganizationContext();
-  const [teamMembers, rateCardBands] = await Promise.all([
-    listTeamMembers(organizationId),
-    listRateCardBands(organizationId),
-  ]);
-  return { teamMembers, rateCardBands };
+export async function deleteRateBandAction(formData: FormData): Promise<void> {
+  const { organizationId } = await requireProposalAccess();
+  const id = asNullable(formData.get("id"));
+  if (!id) throw new Error("Missing rate id");
+  await deleteRateBand(organizationId, id);
+  revalidatePath("/practice");
 }
