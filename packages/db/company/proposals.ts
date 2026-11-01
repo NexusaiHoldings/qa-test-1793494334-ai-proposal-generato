@@ -1,6 +1,9 @@
+/**
+ * Company domain schema for the (proposals) carve-out — Practice Profile +
+ * Rate Card (F1-002). migrate.ts runs every *_DDL constant against the company
+ * database at deploy; the TABLE-REF gate recognizes tables created here.
+ */
 export const PROPOSALS_DDL = `
-CREATE EXTENSION IF NOT EXISTS vector;
-
 CREATE TABLE IF NOT EXISTS proposals_practice_profiles (
   organization_id uuid PRIMARY KEY,
   vertical text,
